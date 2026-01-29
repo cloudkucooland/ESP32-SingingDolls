@@ -16,7 +16,7 @@
 #include "esp_ble_midi.h"
 #include "esp_ble_midi_svc.h"
 
-#include "esp32-LEAF.h"
+#include "leaf.h"
 
 static const char *TAG = "SingingDoll";
 static TaskHandle_t s_midi_task = NULL;
@@ -31,7 +31,6 @@ static void bgtask() {
       }
       vTaskDelay(100);
       // ESP_LOGW(TAG, "bgtask tick");
-      leaf_noop();
     }
 
 done:
@@ -197,6 +196,15 @@ void app_main(void) {
         esp_event_handler_unregister(BLE_CONN_MGR_EVENTS, ESP_EVENT_ANY_ID, app_ble_conn_event_handler);
         return;
     }
+
+    LEAF leaf;
+    #define MEM_SIZE 500000
+    char myMemory[MEM_SIZE];
+    #define AUDIO_BUFFER_SIZE 128
+    float audioBuffer[AUDIO_BUFFER_SIZE];
+    // LEAF_init(&leaf, 48000, AUDIO_BUFFER_SIZE, myMemory, MEM_SIZE, &randomNumber);
+    tCycle_init(&mySine, &leaf);
+    tCycle_setFreq(&mySine, 440.0);
 
     ESP_LOGI(TAG, "leaving app_main");
 }
