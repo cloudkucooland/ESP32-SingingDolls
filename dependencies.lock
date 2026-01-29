@@ -27,6 +27,13 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 0.1.0
+  espressif/ble_services:
+    component_hash: 525d7a4ab738361a03ec8067537f6cea2e978fd058a8083dea67e2286fd8fb3a
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.0
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -44,7 +51,8 @@ dependencies:
 direct_dependencies:
 - espressif/ble_conn_mgr
 - espressif/ble_midi
+- espressif/ble_services
 - idf
-manifest_hash: 784a6242634f1581e582528e268e1fcd5c892caf1d883736826cea745f763430
+manifest_hash: e964b2138d3bb169a955551f4bbc44227d5cf57c9d42655e693920db48c50d7f
 target: esp32c3
 version: 2.0.0

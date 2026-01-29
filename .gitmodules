@@ -1,0 +1,3 @@
+[submodule "components/esp32-LEAF"]
+	path = components/esp32-LEAF
+	url = git@github.com:cloudkucooland/esp32-LEAF.git
