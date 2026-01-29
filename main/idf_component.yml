@@ -20,3 +20,4 @@ dependencies:
   espressif/ble_midi:
     version: '*'
     public: true
+  espressif/ble_services: =*
