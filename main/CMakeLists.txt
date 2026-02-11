@@ -1,3 +1,3 @@
-idf_component_register(SRCS "sd-idf.c"
+idf_component_register(SRCS "main.c;leaf.c;audio.c"
                     INCLUDE_DIRS "."
-		    PRIV_REQUIRES nvs_flash bt esp_event esp32-LEAF)
+		    PRIV_REQUIRES esp_event nvs_flash bt esp32-LEAF)

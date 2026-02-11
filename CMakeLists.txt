@@ -3,5 +3,5 @@
 cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+# set(EXTRA_COMPONENT_DIRS "$ENV{ADF_PATH}/components")
 project(sd-idf)
-#set(EXTRA_COMPONENT_DIRS "managed_components")
