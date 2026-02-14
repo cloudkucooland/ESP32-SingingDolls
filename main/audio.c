@@ -1,112 +1,74 @@
 /*
- * SPDX-FileCopyrightText: 2025 Espressif Systems (Shanghai) CO., LTD
+ * SPDX-FileCopyrightText: 2021-2024 Espressif Systems (Shanghai) CO LTD
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
-#include <string.h>
-#include "esp_err.h"
+
+#include <stdint.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
-#include "esp_log.h"
-#include "esp_gmf_element.h"
-#include "esp_gmf_pipeline.h"
-#include "esp_gmf_pool.h"
-#include "esp_gmf_io_embed_flash.h"
-#include "esp_gmf_app_setup_peripheral.h"
-#include "esp_gmf_audio_helper.h"
-#include "esp_gmf_audio_dec.h"
-#include "gmf_loader_setup_defaults.h"
-#include "esp_gmf_io_codec_dev.h"
+#include "freertos/task.h"
+#include "driver/i2s_std.h"
+#include "driver/gpio.h"
+#include "esp_check.h"
+#include "sdkconfig.h"
 
-static const char *TAG = "PLAY_EMBED_MUSIC";
+#include "sd.h"
 
-#define PIPELINE_BLOCK_BIT BIT(0)
+static i2s_chan_handle_t                tx_chan;        // I2S tx channel handler
+static i2s_chan_handle_t                rx_chan;        // I2S rx channel handler
 
-esp_err_t _pipeline_event(esp_gmf_event_pkt_t *event, void *ctx) {
-    ESP_LOGI(TAG, "CB: RECV Pipeline EVT: el: %s-%p, type: %x, sub: %s, payload: %p, size: %d, %p",
-             "OBJ_GET_TAG(event->from)", event->from, event->type, esp_gmf_event_get_state_str(event->sub),
-             event->payload, event->payload_size, ctx);
-    if ((event->sub == ESP_GMF_EVENT_STATE_STOPPED)
-        || (event->sub == ESP_GMF_EVENT_STATE_FINISHED)
-        || (event->sub == ESP_GMF_EVENT_STATE_ERROR)) {
-        xEventGroupSetBits((EventGroupHandle_t)ctx, PIPELINE_BLOCK_BIT);
+static void i2s_write_task(void *args) {
+    int16_t *w_buf = (int16_t *)calloc(AUDIO_BUFFSIZE, sizeof(int16_t));
+    assert(w_buf);
+    size_t w_bytes = AUDIO_BUFFSIZE;
+
+    /* Enable the TX channel */
+    ESP_ERROR_CHECK(i2s_channel_enable(tx_chan));
+
+    while (1) {
+	synthTick(w_buf, AUDIO_BUFFSIZE);
+        if (i2s_channel_write(tx_chan, w_buf, AUDIO_BUFFSIZE, &w_bytes, 1000) != ESP_OK) {
+            printf("Write Task: i2s write failed\n");
+            break;
+        }
     }
-    return 0;
+    free(w_buf);
+    vTaskDelete(NULL);
 }
 
-void audio_start(void) {
-    esp_log_level_set("*", ESP_LOG_INFO);
-    ESP_GMF_MEM_SHOW(TAG);
-    int ret;
-    ESP_LOGI(TAG, "[ 1 ] Mount peripheral");
-    // Configuration of codec to be aligned with audio pipeline output
-    esp_gmf_app_codec_info_t codec_info = ESP_GMF_APP_CODEC_INFO_DEFAULT();
-    codec_info.play_info.sample_rate = CONFIG_GMF_AUDIO_EFFECT_RATE_CVT_DEST_RATE;
-    codec_info.play_info.channel = CONFIG_GMF_AUDIO_EFFECT_CH_CVT_DEST_CH;
-    codec_info.play_info.bits_per_sample = CONFIG_GMF_AUDIO_EFFECT_BIT_CVT_DEST_BITS;
-    codec_info.record_info = codec_info.play_info;
-    esp_gmf_app_setup_codec_dev(&codec_info);
+void start_audio(void) {
+    // look into i2s_channel_register_event_callback()
 
-    // Set default output volume range from [0, 100]
-    esp_codec_dev_set_out_vol((esp_codec_dev_handle_t)esp_gmf_app_get_playback_handle() , 80);
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_chan, &rx_chan));
 
-    ESP_LOGI(TAG, "[ 2 ] Register all the elements and set audio information to play codec device");
-    esp_gmf_pool_handle_t pool = NULL;
-    esp_gmf_pool_init(&pool);
-    gmf_loader_setup_io_default(pool);
-    gmf_loader_setup_audio_codec_default(pool);
-    gmf_loader_setup_audio_effects_default(pool);
-    ESP_GMF_POOL_SHOW_ITEMS(pool);
+    i2s_std_config_t std_cfg = {
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,    // some codecs may require mclk signal, this example doesn't need it
+            .bclk = I2S_BCLK_IO,
+            .ws   = I2S_WS_IO,
+            .dout = I2S_DOUT_IO,
+            .din  = I2S_DOUT_IO, // duplex
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv   = false,
+            },
+        },
+    };
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_chan, &std_cfg));
+    // ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_chan, &std_cfg));
 
-    ESP_LOGI(TAG, "[ 3 ] Create audio pipeline");
-    esp_gmf_pipeline_handle_t pipe = NULL;
-    const char *name[] = {"aud_dec", "aud_bit_cvt", "aud_rate_cvt", "aud_ch_cvt"};
-    ret = esp_gmf_pool_new_pipeline(pool, "io_embed_flash", name, sizeof(name) / sizeof(char *), "io_codec_dev", &pipe);
-    ESP_GMF_RET_ON_NOT_OK(TAG, ret, { return; }, "Failed to new pipeline");
+    xTaskCreate(i2s_write_task, "i2s_write_task", 4096, NULL, 5, NULL);
+}
 
-    esp_gmf_io_codec_dev_set_dev(ESP_GMF_PIPELINE_GET_OUT_INSTANCE(pipe), esp_gmf_app_get_playback_handle());
+void stop_audio(void) {
+  i2s_channel_disable(tx_chan);
+  // i2s_channel_disable(rx_chan);
 
-    ESP_LOGI(TAG, "[ 3.1 ] Set audio url to play");
-    esp_gmf_pipeline_set_in_uri(pipe, esp_embed_tone_url[ESP_EMBED_TONE_FF_16B_1C_44100HZ_MP3]);
-    esp_gmf_io_handle_t in_io = NULL;
-    esp_gmf_pipeline_get_in(pipe, &in_io);
-    esp_gmf_io_embed_flash_set_context(in_io, (embed_item_info_t *)&g_esp_embed_tone[0], ESP_EMBED_TONE_URL_MAX);
-    esp_gmf_element_handle_t dec_el = NULL;
-    esp_gmf_pipeline_get_el_by_name(pipe, "aud_dec", &dec_el);
-    esp_gmf_info_sound_t info = {0};
-    esp_gmf_audio_helper_get_audio_type_by_uri(esp_embed_tone_url[ESP_EMBED_TONE_FF_16B_1C_44100HZ_MP3], &info.format_id);
-    esp_gmf_audio_dec_reconfig_by_sound_info(dec_el, &info);
-
-    ESP_LOGI(TAG, "[ 3.2 ] Create gmf task, bind task to pipeline and load linked element jobs to the bind task");
-    esp_gmf_task_cfg_t cfg = DEFAULT_ESP_GMF_TASK_CONFIG();
-    cfg.ctx = NULL;
-    cfg.cb = NULL;
-    esp_gmf_task_handle_t work_task = NULL;
-    ret = esp_gmf_task_init(&cfg, &work_task);
-    ESP_GMF_RET_ON_NOT_OK(TAG, ret, { return; }, "Failed to create pipeline task");
-    esp_gmf_pipeline_bind_task(pipe, work_task);
-    esp_gmf_pipeline_loading_jobs(pipe);
-
-    ESP_LOGI(TAG, "[ 3.3 ] Create envent group and listening event from pipeline");
-    EventGroupHandle_t pipe_sync_evt = xEventGroupCreate();
-    ESP_GMF_NULL_CHECK(TAG, pipe_sync_evt, return);
-    esp_gmf_pipeline_set_event(pipe, _pipeline_event, pipe_sync_evt);
-
-    ESP_LOGI(TAG, "[ 4 ] Start audio_pipeline");
-    esp_gmf_pipeline_run(pipe);
-
-    // Wait to finished or got error
-    ESP_LOGI(TAG, "[ 5 ] Wait stop event to the pipeline and stop all the pipeline");
-    xEventGroupWaitBits(pipe_sync_evt, PIPELINE_BLOCK_BIT, pdTRUE, pdFALSE, portMAX_DELAY);
-    esp_gmf_pipeline_stop(pipe);
-
-    ESP_LOGI(TAG, "[ 6 ] Destroy all the resources");
-    esp_gmf_task_deinit(work_task);
-    esp_gmf_pipeline_destroy(pipe);
-    gmf_loader_teardown_audio_effects_default(pool);
-    gmf_loader_teardown_audio_codec_default(pool);
-    gmf_loader_teardown_io_default(pool);
-    esp_gmf_pool_deinit(pool);
-    esp_gmf_app_teardown_codec_dev();
-    ESP_GMF_MEM_SHOW(TAG);
+  i2s_del_channel(tx_chan);
+  i2s_del_channel(rx_chan);
 }

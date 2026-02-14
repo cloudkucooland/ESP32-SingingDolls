@@ -39,56 +39,43 @@ static void conn_param_update_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-static void bgtask() {
-    ESP_LOGI(TAG, "Starting bgtask");
-
-    while(true) {
-      if (!esp_ble_midi_is_notify_enabled()) {
-        ESP_LOGW(TAG, "Notification disabled, exiting bgtask");
-        goto done;
-      }
-      vTaskDelay(100);
-      // ESP_LOGW(TAG, "bgtask tick");
-    }
-
-done:
-    ESP_LOGI(TAG, "bgtask exiting");
-    s_midi_task = NULL;
-}
-
-static void midi_rx_cb(const uint8_t *data, uint16_t len, void *user_ctx) {
-    (void)user_ctx; /* Unused in this example */
-    ESP_LOGI(TAG, "MIDI RX (%u):", len);
-    ESP_LOG_BUFFER_HEX(TAG, data, len);
-}
-
 static void midi_evt_cb(uint16_t ts_ms, esp_ble_midi_event_type_t event_type, const uint8_t *msg, uint16_t msg_len) {
     if (event_type == ESP_BLE_MIDI_EVENT_SYSEX_OVERFLOW) {
         ESP_LOGW(TAG, "MIDI EVT ts=%u: SysEx buffer overflow detected", ts_ms);
         return;
     }
-    ESP_LOGI(TAG, "MIDI EVT ts=%u len=%u type=%u", ts_ms, msg_len, event_type);
-    if (msg == NULL || msg_len == 0) {
-        return;
-    }
-    char line[96] = {0};
-    size_t pos = 0;
-    for (int i = 0; i < msg_len; i++) {
-        int written = snprintf(&line[pos], sizeof(line) - pos, "%02X ", msg[i]);
-        if (written > 0) {
-            pos += written;
-            if (pos >= sizeof(line)) {
-                pos = sizeof(line) - 1;
+
+    switch(msg[0]) {
+    case 0x90:
+        ESP_LOGI(TAG, "Note On: %02X %02X\n", msg[1], msg[2]);
+	noteOn(msg[1], msg[2]);
+        break;
+    case 0x80:
+        ESP_LOGI(TAG, "Note Off: %02X\n", msg[1]);
+	noteOff(msg[1]);
+        break;
+    default:
+        ESP_LOGI(TAG, "Something Else: %02X\n", msg[0]);
+        char line[96] = {0};
+        size_t pos = 0;
+        for (int i = 0; i < msg_len; i++) {
+            int written = snprintf(&line[pos], sizeof(line) - pos, "%02X ", msg[i]);
+            if (written > 0) {
+                pos += written;
+                if (pos >= sizeof(line)) {
+                    pos = sizeof(line) - 1;
+                }
+            }
+            if (pos > (sizeof(line) - 4)) {
+                ESP_LOGI(TAG, "%s", line);
+                pos = 0;
+                line[0] = 0;
             }
         }
-        if (pos > (sizeof(line) - 4)) {
+        if (pos) {
             ESP_LOGI(TAG, "%s", line);
-            pos = 0;
-            line[0] = 0;
         }
-    }
-    if (pos) {
-        ESP_LOGI(TAG, "%s", line);
+        break;
     }
 }
 
@@ -101,11 +88,6 @@ static void app_ble_conn_event_handler(void *handler_args, esp_event_base_t base
     switch (id) {
     case ESP_BLE_CONN_EVENT_CONNECTED:
         ESP_LOGI(TAG, "ESP_BLE_CONN_EVENT_CONNECTED");
-        /* Reset notification and indication state on new connection */
-
-	uint8_t peer[6];
-	ESP_ERROR_CHECK(esp_ble_conn_get_peer_addr(peer));
-	ESP_LOGE(TAG, "peer %d:%d:%d:%d:%d:%d", peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
 
         esp_ble_midi_set_notify_enabled(false);
         /* Ask for low-latency params via conn_mgr: 7.5 ms, latency 0, timeout 4 s.
@@ -125,6 +107,12 @@ static void app_ble_conn_event_handler(void *handler_args, esp_event_base_t base
 		}
             }
         }
+
+        ESP_LOGI(TAG, "starting leaf");
+        start_leaf();
+
+        ESP_LOGI(TAG, "starting i2s audio");
+        start_audio();
         break;
     case ESP_BLE_CONN_EVENT_CCCD_UPDATE: {
         esp_ble_conn_cccd_update_t *cccd_update = (esp_ble_conn_cccd_update_t *)event_data;
@@ -144,13 +132,7 @@ static void app_ble_conn_event_handler(void *handler_args, esp_event_base_t base
             if (cccd_update->notify_enable && s_midi_task == NULL) {
                 /* Update MIDI notification and indication state */
                 esp_ble_midi_set_notify_enabled(true);
-                ESP_LOGI(TAG, "MIDI notification enabled, starting MIDI task");
-                BaseType_t task_result = xTaskCreate(bgtask, "bgtask", 4096, NULL, 5, &s_midi_task);
-                if (task_result != pdPASS) {
-                    ESP_LOGE(TAG, "Failed to create MIDI task, disabling notifications");
-                    esp_ble_midi_set_notify_enabled(false);
-                    s_midi_task = NULL;
-                }
+                ESP_LOGI(TAG, "MIDI notification enabled");
             } else if (!cccd_update->notify_enable && s_midi_task != NULL) {
                 ESP_LOGI(TAG, "MIDI notification disabled, task will exit on next check");
                 /* Update MIDI notification and indication state */
@@ -166,6 +148,8 @@ static void app_ble_conn_event_handler(void *handler_args, esp_event_base_t base
         ESP_LOGI(TAG, "ESP_BLE_CONN_EVENT_DISCONNECTED");
         /* Reset notification and indication state on disconnect */
         esp_ble_midi_set_notify_enabled(false);
+        stop_audio();
+        stop_leaf();
         break;
     default:
         ESP_LOGI(TAG, "ESP_BLE_CONN_EVENT_UNKNOWN");
@@ -201,7 +185,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_ble_conn_set_mtu(256));
     ESP_ERROR_CHECK(esp_ble_midi_svc_init()); /* Register BLE-MIDI service and IO characteristic */
     ESP_ERROR_CHECK(esp_ble_midi_profile_init()); /* Initialize BLE MIDI profile (must be called before registering callbacks) */
-    ESP_ERROR_CHECK(esp_ble_midi_register_rx_cb(midi_rx_cb, NULL)); /* Register RX callback with NULL user context */
+    // ESP_ERROR_CHECK(esp_ble_midi_register_rx_cb(midi_rx_cb, NULL)); /* Register RX callback with NULL user context */
     ESP_ERROR_CHECK(esp_ble_midi_register_event_cb(midi_evt_cb));
 
     if (esp_ble_conn_start() != ESP_OK) {
@@ -213,8 +197,6 @@ void app_main(void) {
         return;
     }
 
-    ESP_LOGI(TAG, "starting leaf");
-    start_leaf();
 
     ESP_LOGI(TAG, "leaving app_main");
 }
