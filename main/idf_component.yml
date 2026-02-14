@@ -15,5 +15,4 @@ dependencies:
     version: '*'
     override_path: 
       /Users/scot/Documents/GitHub/esp-iot-solution/components/bluetooth/ble_services
-  espressif/pwm_audio: ^1.1.2
   zorxx/neopixel: ^1.0.10
