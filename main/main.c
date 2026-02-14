@@ -12,7 +12,6 @@
 #include "sd.h"
 
 static const char *TAG = "SingingDoll";
-static TaskHandle_t s_midi_task = NULL;
 
 static void conn_param_update_task(void *arg) {
     uint16_t conn_handle = *(uint16_t *)arg;
@@ -128,18 +127,10 @@ static void app_ble_conn_event_handler(void *handler_args, esp_event_base_t base
         }
 
         if (is_midi_char) {
-            /* Start MIDI task only when notification is enabled */
-            if (cccd_update->notify_enable && s_midi_task == NULL) {
-                /* Update MIDI notification and indication state */
+            if (cccd_update->notify_enable) {
                 esp_ble_midi_set_notify_enabled(true);
-                ESP_LOGI(TAG, "MIDI notification enabled");
-            } else if (!cccd_update->notify_enable && s_midi_task != NULL) {
-                ESP_LOGI(TAG, "MIDI notification disabled, task will exit on next check");
-                /* Update MIDI notification and indication state */
+            } else if (!cccd_update->notify_enable) {
                 esp_ble_midi_set_notify_enabled(false);
-                /* Optionally delete the task immediately for cleaner lifecycle */
-                vTaskDelete(s_midi_task);
-                s_midi_task = NULL;
             }
         }
         break;
@@ -197,6 +188,5 @@ void app_main(void) {
         return;
     }
 
-
-    ESP_LOGI(TAG, "leaving app_main");
+    ESP_LOGI(TAG, "running...");
 }
