@@ -19,6 +19,7 @@ static float decayTable[128];
 static float releaseTable[128];
 static float freqTable[128];
 static float resoTable[128];
+static float sustainTable[128];
 
 static void conn_param_update_task(void *arg) {
     uint16_t conn_handle = *(uint16_t *)arg;
@@ -67,6 +68,27 @@ void midi_evt_cb(uint16_t ts_ms, esp_ble_midi_event_type_t event_type, const uin
     case 0xB0: // CC
 	if (msg_len < 3) break;
     	switch(msg[1]) {
+	case 0x39: // saw mix
+		setSawMix(sustainTable[msg[2]]);
+		break;
+	case 0x3A: // sub mix
+		setSubMix(sustainTable[msg[2]]);
+		break;
+	case 0x3B: // amp release
+		setAmpRelease(releaseTable[msg[2]]);
+		break;
+	case 0x3C: // amp  attack
+		setAmpAttack(attackTable[msg[2]]);
+		break;
+	case 0x3E: // amp  decay
+		setAmpDecay(decayTable[msg[2]]);
+		break;
+	case 0x3f: // amp  sustain
+		setAmpSustain(sustainTable[msg[2]]);
+		break;
+	case 0x40: // filter sustain
+		setFilterSustain(sustainTable[msg[2]]);
+		break;
 	case 0x47: // filter resonance 
 		setFilterResonance(resoTable[msg[2]]);
 		break;
@@ -183,15 +205,15 @@ void app_ble_conn_event_handler(void *handler_args, esp_event_base_t base, int32
 
 void initTables() {
 	const float minRelease = 0.01f;
-	const float maxRelease = 5.0f;
+	const float maxRelease = 5000.0f;
 	const float minAttack = 0.01f;
-	const float maxAttack = 3.0f;
+	const float maxAttack = 3000.0f;
 	const float minFreq = 60.0f; // no need for super-low on small speakers
-	const float maxFreq = 10000.0f; // no need for highs, we are running at 24kHz
+	const float maxFreq = 12000.0f; // no need for highs, we are running at 24kHz
 	const float minDecay = 0.01f;
-	const float maxDecay = 3.0f;
+	const float maxDecay = 3000.0f;
 	const float minReso = 0.01f;
-	const float maxReso = 0.9f;
+	const float maxReso = 1.0f;
 
 	for (int i = 0; i < 128; i++) {
 		float ratio = i / 127.0f; // only called at startup, doesn't need micro-optimization
@@ -201,5 +223,6 @@ void initTables() {
 		releaseTable[i] = minRelease * powf(maxRelease / minRelease, ratio);
 		freqTable[i] = minFreq * powf(maxFreq / minFreq, ratio);
 		resoTable[i] = minReso + (ratio * ratio) * (maxReso - minReso);
+		sustainTable[i] = ratio; // 0.0f - 1.0f
 	}
 }

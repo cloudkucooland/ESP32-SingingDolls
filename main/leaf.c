@@ -6,12 +6,17 @@
 typedef struct {
 	tCycle *sine;
 	tSawtooth *saw;
-	tTwoPole *filter;
+
+	float subAmt;
+        float sawAmt;
+
+	tBiQuad *filter;
 	tADSR *ampEnv; // env for amp
 	tADSR *filtEnv; // env for filter freq
 
 	float reso;
 	float filterFreq;
+	float oscFreq;
 } synth_t;
 
 static LEAF leaf;
@@ -19,7 +24,7 @@ static __attribute__((aligned(8))) char leafMempool[LEAF_MEM_POOL_SIZE];
 
 static float rando() {
 	return (float)esp_random() / (float)UINT32_MAX;
-};
+}
 
 static synth_t synth;
 
@@ -39,38 +44,43 @@ void start_leaf(void) {
 	assert(synth.saw);
 	tSawtooth_setFreq(synth.saw, 0.0);
 
-	tTwoPole_init(&synth.filter, &leaf);
+	tBiQuad_init(&synth.filter, &leaf);
 	assert(synth.filter);
+	// tBiQuad_setEqualGainZeros(synth.filter); 
+	tBiQuad_setSampleRate(synth.filter, SAMPLE_RATE);
 
-	synth.reso = 0.25f;
-	synth.filterFreq = 1000.0f;
-	tTwoPole_setResonance(synth.filter, synth.filterFreq, synth.reso, 0); // 1kHz, mild reso
+	synth.reso = 0.5f;
+	synth.filterFreq = SAMPLE_RATE * 0.45f; // start wide open
+	tBiQuad_setResonance(synth.filter, synth.filterFreq, synth.reso, 1); 
 
 	tADSR_init(&synth.ampEnv,
-		50.0f, // attack (ms)
-		100.0f,	 // decay (ms)
-		0.7f,	 // sustain (0–1)
-		300.0f,	 // release (ms)
+		20.0f, // attack (ms)
+		200.0f,	 // decay (ms)
+		0.9f,	 // sustain (0–1)
+		200.0f,	 // release (ms)
 	   	&leaf);
 	assert(synth.ampEnv);
 
 	tADSR_init(&synth.filtEnv,
-		40.0f,
-		90.0f,
-		0.01f,
-		300.0f,
+		10.0f,
+		150.0f,
+		0.50f,
+		100.0f,
 		&leaf);
 	assert(synth.filtEnv);
+
+        synth.subAmt = 0.2;
+        synth.sawAmt = 0.7;
+
+        synth.oscFreq = 0.0f;
 }
 
 void noteOn(uint8_t midipitch, uint8_t velocity) {
-	Lfloat freq;
-
 	if (leaf.sampleRate == 0) return;
-
-	freq = LEAF_midiToFrequency(midipitch);
-	tCycle_setFreq(synth.sine, freq * 0.5f);
-	tSawtooth_setFreq(synth.saw, freq);
+	
+	synth.oscFreq = LEAF_midiToFrequency(midipitch);
+	tCycle_setFreq(synth.sine, synth.oscFreq * 0.5f);
+	tSawtooth_setFreq(synth.saw, synth.oscFreq);
 
 	float vel = velocity / 127.0f;
 	tADSR_on(synth.ampEnv, vel);
@@ -82,46 +92,6 @@ void noteOff(uint8_t midipitch) {
 
 	tADSR_off(synth.ampEnv);
 	tADSR_off(synth.filtEnv);
-}
-
-void synth_tick(int32_t *buf) {
-	static int controlStepCounter  = 0;
-	static float smoothCutoff = 1000.0f;
-
-	const int CONTROL_RATE = 1000;
-	const int CONTROL_STEP = SAMPLE_RATE / CONTROL_RATE;
-	
-	for (int i = 0; i < AUDIO_BUFFSIZE; i++) {
-	    float sub = tCycle_tick(synth.sine);
-	    float saw = tSawtooth_tick(synth.saw);
-	
-	    float samp = (0.8f * saw) + (0.2f * sub);
-	    samp *= 0.5f; // headroom
-	
-	    float filtEnv = tADSR_tick(synth.filtEnv);
-	    if (++controlStepCounter >= CONTROL_STEP) {
-	        controlStepCounter = 0;
-	
-	        float target = 100.0f + (synth.filterFreq * filtEnv);
-	        smoothCutoff += 0.05f * (target - smoothCutoff);
-	
-	        tTwoPole_setResonance(synth.filter, smoothCutoff, synth.reso, 0);
-	    }
-	    samp = tTwoPole_tick(synth.filter, samp);
-
-            float normCutoff = smoothCutoff / 10000.0f;
-            float gainComp = 0.5f + 0.5f * normCutoff;
-            samp *= gainComp;
-	
-	    float env = tADSR_tick(synth.ampEnv);
-	    samp *= env;
-	
-	    int16_t s16 = (int16_t)(samp * 32767.0f);
-	    int32_t s32 = ((int32_t)s16) << 16;
-	
-	    buf[2*i]     = s32;
-	    buf[2*i + 1] = s32;
-	}
 }
 
 void setFilterFreq(float freq) {
@@ -147,3 +117,92 @@ void setFilterRelease(float r) {
 void setFilterResonance(float r) {
 	synth.reso = r;
 }
+
+void setAmpAttack(float a) {
+	tADSR_setAttack(synth.ampEnv, a);
+}
+
+void setAmpDecay(float d) {
+	tADSR_setDecay(synth.ampEnv, d);
+}
+
+void setAmpSustain(float s) {
+	tADSR_setSustain(synth.ampEnv, s);
+}
+
+void setAmpRelease(float r) {
+	tADSR_setRelease(synth.ampEnv, r);
+}
+
+void setSubMix(float m) {
+	synth.subAmt = m;
+}
+
+void setSawMix(float m) {
+	synth.sawAmt = m;
+}
+
+void synth_tick(int32_t *buf) {
+    static int controlStepCounter  = 0;
+    static float smoothCutoff = 1000.0f;
+
+    const int CONTROL_RATE = 1000;
+    const int CONTROL_STEP = SAMPLE_RATE / CONTROL_RATE;
+
+    for (int i = 0; i < AUDIO_BUFFSIZE; i++) {
+        // Oscillators
+        float sub = tCycle_tick(synth.sine);
+        float saw = tSawtooth_tick(synth.saw);
+
+	// mix
+        float samp = (synth.sawAmt * saw) + (synth.subAmt * sub);
+        samp *= 0.7f; // headroom
+
+        // Filter envelope
+        float filtEnv = tADSR_tick(synth.filtEnv);
+
+        if (++controlStepCounter >= CONTROL_STEP) {
+            controlStepCounter = 0;
+
+            // Pitch-based scaling
+            float pitchFactor = synth.oscFreq / 1000.0f; 
+            if (pitchFactor > 1.0f) pitchFactor = 1.0f; // clamp
+
+            // Target cutoff = base + envelope contribution + pitch factor
+            float targetCutoff = 50.0f + (synth.filterFreq * (0.2f + 0.8f * filtEnv) * (0.5f + 0.5f * pitchFactor));
+
+            // Smooth cutoff to avoid zipper noise
+            smoothCutoff += 0.1f * (targetCutoff - smoothCutoff);
+
+            // Clamp cutoff to reasonable range
+            if (smoothCutoff < 20.0f) smoothCutoff = 20.0f;
+            if (smoothCutoff > SAMPLE_RATE * 0.45f) smoothCutoff = SAMPLE_RATE * 0.45f;
+
+            // Clamp resonance
+            float radius = fminf(synth.reso, 0.99f);
+	    // float radius = synth.reso;
+
+            tBiQuad_setResonance(synth.filter, smoothCutoff, radius, 1);
+        }
+
+        // Apply filter
+        samp = tBiQuad_tick(synth.filter, samp);
+
+        // Optional: gain compensation (boost higher cutoff)
+        /* float normCutoff = smoothCutoff / 10000.0f;
+        float gainComp = 0.5f + 0.5f * normCutoff;
+        samp *= gainComp; */
+
+        // Apply amplitude envelope
+        float env = tADSR_tick(synth.ampEnv);
+        samp *= env;
+
+        // Convert to interleaved 32-bit buffer
+        int16_t s16 = (int16_t)(samp * 32767.0f);
+        int32_t s32 = ((int32_t)s16) << 16;
+
+        buf[2*i]     = s32;
+        buf[2*i + 1] = s32;
+    }
+}
+
