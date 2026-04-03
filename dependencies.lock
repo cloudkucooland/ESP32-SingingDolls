@@ -1,39 +1,31 @@
 dependencies:
-  espressif/ble_conn_mgr:
-    component_hash: 7da9eda5e890f60f6361a42389635de7143a6717a6c2cdee758989e7ef9d26fa
+  ble_conn_mgr:
     dependencies:
+    - name: idf
+      version: '>=4.3'
     - name: espressif/cmake_utilities
-      registry_url: https://components.espressif.com
-      require: private
       version: 0.*
-    - name: idf
-      require: private
-      version: '>=4.3'
     source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 0.1.4
-  espressif/ble_midi:
-    component_hash: a2a646c068f43ba18ae41719725074a1c950a7de2b3361354e3494302eefa542
+      path: /Users/scot/Documents/GitHub/esp-iot-solution/components/bluetooth/ble_conn_mgr
+      type: local
+    version: 0.1.6
+  ble_midi:
     dependencies:
-    - name: espressif/ble_conn_mgr
-      registry_url: https://components.espressif.com
-      require: private
-      version: ~0.*
     - name: idf
-      require: private
       version: '>=4.3'
+    - name: ble_conn_mgr
+      override_path: ../../../ble_conn_mgr
+      version: ~0.*
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: /Users/scot/Documents/GitHub/esp-iot-solution/components/bluetooth/ble_profiles/third_party/ble_midi
+      type: local
     version: 0.1.0
-  espressif/ble_services:
-    component_hash: 525d7a4ab738361a03ec8067537f6cea2e978fd058a8083dea67e2286fd8fb3a
+  ble_services:
     dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.2.0
+      path: /Users/scot/Documents/GitHub/esp-iot-solution/components/bluetooth/ble_services
+      type: local
+    version: 1.2.1
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -41,18 +33,25 @@ dependencies:
       require: private
       version: '>=4.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 0.5.3
   idf:
     source:
       type: idf
-    version: 5.5.2
+    version: 5.5.3
+  zorxx/neopixel:
+    dependencies: []
+    source:
+      path: /Users/scot/Documents/GitHub/neopixel
+      type: local
+    version: 1.0.10
 direct_dependencies:
-- espressif/ble_conn_mgr
-- espressif/ble_midi
-- espressif/ble_services
+- ble_conn_mgr
+- ble_midi
+- ble_services
 - idf
-manifest_hash: e964b2138d3bb169a955551f4bbc44227d5cf57c9d42655e693920db48c50d7f
+- zorxx/neopixel
+manifest_hash: 1c08013163449701c5b35e71aa97c86967c273a1897f41d7dc698cda6633e26b
 target: esp32c3
 version: 2.0.0

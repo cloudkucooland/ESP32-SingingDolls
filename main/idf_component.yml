@@ -15,4 +15,7 @@ dependencies:
     version: '*'
     override_path: 
       /Users/scot/Documents/GitHub/esp-iot-solution/components/bluetooth/ble_services
-  zorxx/neopixel: ^1.0.10
+  zorxx/neopixel:
+    version: ^1.0.10
+    override_path: 
+      /Users/scot/Documents/GitHub/neopixel
