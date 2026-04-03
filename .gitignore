@@ -17,3 +17,5 @@ Makefile
 managed_components
 sdkconfig
 Testing
+/log
+warnings.txt
